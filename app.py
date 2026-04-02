@@ -153,10 +153,15 @@ if uploaded_file and st.button("🚀 Process SRT"):
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
         df_final.to_excel(writer, sheet_name="Final Segments", index=False)
-
-        if not df_deleted.empty:
-            df_deleted.to_excel(writer, sheet_name="Deleted Segments", index=False)
-
+        if df_deleted.empty:
+            df_deleted = pd.DataFrame([{
+                "Segment": "",
+                "Time": "",
+                "Text": "",
+                "Error": "Nema grešaka"
+            }])
+        
+        df_deleted.to_excel(writer, sheet_name="Deleted Segments", index=False)
     # STORE
     st.session_state.joined_srt = joined_srt
     st.session_state.excel_bytes = excel_buffer.getvalue()

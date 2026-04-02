@@ -256,7 +256,7 @@ if uploaded_file and st.button("🚀 Process SRT"):
         for seg in clean_segments
     ])
 
-        def extract_original_blocks(segment_list_str, raw_content):
+    def extract_original_blocks(segment_list_str, raw_content):
         if not segment_list_str:
             return ""
 

@@ -239,9 +239,13 @@ if uploaded_file and st.button("🚀 Process SRT"):
     # FINAL SRT
     joined_srt = titl_join.segments_to_srt(clean_segments)
 
+    
+
     # =====================================
     # EXCEL DATA
     # =====================================
+
+    
     df_final = pd.DataFrame([
         {
             "Segment": seg["num"],
@@ -251,6 +255,27 @@ if uploaded_file and st.button("🚀 Process SRT"):
         }
         for seg in clean_segments
     ])
+
+        def extract_original_blocks(segment_list_str, raw_content):
+        if not segment_list_str:
+            return ""
+
+        ids = [int(x.strip()) for x in segment_list_str.split(",") if x.strip().isdigit()]
+        blocks = []
+
+        for oid in ids:
+            pattern = rf"{oid}\s+([\d:,]+ --> [\d:,]+)\s+([\s\S]*?)(?=\n\d+\n|$)"
+            match = re.search(pattern, raw_content)
+
+            if match:
+                time_line = match.group(1)
+                text_block = match.group(2).strip()
+                blocks.append(f"{oid}\n{time_line}\n{text_block}")
+
+        return "\n\n".join(blocks)
+
+    df_final["Original Full Segments"] = df_final["Original Segments"].apply(
+        lambda x: extract_original_blocks(x, content)
 
     df_deleted = pd.DataFrame(deleted_segments)
 

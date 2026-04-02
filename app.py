@@ -76,7 +76,7 @@ if "authenticated" not in st.session_state:
 if not st.session_state.authenticated:
     st.title("🔐 Subtitle Merger Login")
     password_input = st.text_input("Enter password", type="password")
-
+"""
     if st.button("Login"):
         if password_input == APP_PASSWORD:
             st.session_state.authenticated = True
@@ -85,7 +85,7 @@ if not st.session_state.authenticated:
             st.error("Incorrect password")
 
     st.stop()
-
+"""
 # =====================================
 # UI
 # =====================================

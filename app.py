@@ -14,7 +14,6 @@ MIN_DURATION = 1.0
 MAX_DIST_FORWARD = 0.1
 MAX_DIST_BACKWARD = 1.0
 
-#APP_PASSWORD = st.secrets["APP_PASSWORD"]
 
 # =====================================
 # VALIDATION + FILTER
@@ -75,17 +74,7 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state.authenticated:
     st.title("🔐 Subtitle Merger Login")
-    #password_input = st.text_input("Enter password", type="password")
-"""
-    if st.button("Login"):
-        if password_input == APP_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
 
-    st.stop()
-"""
 # =====================================
 # UI
 # =====================================

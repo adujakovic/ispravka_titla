@@ -104,7 +104,29 @@ if uploaded_file and st.button("🚀 Process SRT"):
     start_time = tm.time()
 
     raw_bytes = uploaded_file.getvalue()
-    content = raw_bytes.decode("utf-8-sig")
+    
+    encodings = [
+        "utf-8-sig",
+        "utf-16",
+        "windows-1250",
+        "windows-1252",
+        "latin-1"
+    ]
+    
+    content = None
+    
+    for enc in encodings:
+        try:
+            content = raw_bytes.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    
+    if content is None:
+        st.error("❌ Ne mogu pročitati encoding fajla")
+        st.stop()  
+    
+
 
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 

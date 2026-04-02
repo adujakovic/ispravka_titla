@@ -276,6 +276,7 @@ if uploaded_file and st.button("🚀 Process SRT"):
 
     df_final["Original Full Segments"] = df_final["Original Segments"].apply(
         lambda x: extract_original_blocks(x, content)
+    )
 
     df_deleted = pd.DataFrame(deleted_segments)
 

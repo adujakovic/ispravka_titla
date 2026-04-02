@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 import titl_join
 import time as tm
+import re
 
 # =====================================
 # CONFIG
@@ -14,6 +15,57 @@ MAX_DIST_FORWARD = 0.1
 MAX_DIST_BACKWARD = 1.0
 
 APP_PASSWORD = st.secrets["APP_PASSWORD"]
+
+# =====================================
+# VALIDATION + FILTER
+# =====================================
+def validate_and_filter_segments(segments):
+
+    time_pattern = re.compile(r"^\d{2}:\d{2}:\d{2},\d{3}$")
+
+    valid_segments = []
+    deleted_segments = []
+
+    expected_number = 1
+
+    for seg in segments:
+
+        error_reason = None
+
+        # 1. broj
+        if seg["num"] != expected_number:
+            error_reason = f"Pogrešan redoslijed (očekivano {expected_number})"
+
+        # 2. vrijeme format
+        if not time_pattern.match(seg["start"]) or not time_pattern.match(seg["end"]):
+            error_reason = "Neispravan format vremena"
+
+        # 3. start >= end
+        if seg["start"] >= seg["end"]:
+            error_reason = "Start >= End"
+
+        # 4. tekst
+        if not seg["text"].strip():
+            error_reason = "Prazan tekst"
+
+        if error_reason:
+            deleted_segments.append({
+                "Segment": seg["num"],
+                "Time": f"{seg['start']} --> {seg['end']}",
+                "Text": seg["text"],
+                "Error": error_reason
+            })
+        else:
+            valid_segments.append(seg)
+
+        expected_number += 1
+
+    # renumeracija
+    for i, seg in enumerate(valid_segments, start=1):
+        seg["num"] = i
+
+    return valid_segments, deleted_segments
+
 
 # =====================================
 # PASSWORD
@@ -37,7 +89,7 @@ if not st.session_state.authenticated:
 # =====================================
 # UI
 # =====================================
-st.title("📜 SRT Merger (No AI)")
+st.title("📜 SRT Merger + Cleaner")
 
 uploaded_file = st.file_uploader("Upload SRT file", type=["srt"])
 
@@ -74,30 +126,36 @@ if uploaded_file and st.button("🚀 Process SRT"):
             max_dist_backward=MAX_DIST_BACKWARD
         )
 
+    # =====================================
+    # VALIDATION + FILTER
+    # =====================================
+    clean_segments, deleted_segments = validate_and_filter_segments(merged_segments)
+
     # FINAL SRT
-    joined_srt = titl_join.segments_to_srt(merged_segments)
+    joined_srt = titl_join.segments_to_srt(clean_segments)
 
     # =====================================
-    # EXCEL DATA (ONLY MERGING INFO)
+    # EXCEL DATA
     # =====================================
-    df_data = []
-
-    for i, seg in enumerate(merged_segments, start=1):
-        df_data.append({
-            "Segment": i,
+    df_final = pd.DataFrame([
+        {
+            "Segment": seg["num"],
             "Time": f"{seg['start']} --> {seg['end']}",
             "Merged Text": seg["text"],
-            "Original Segments": ", ".join(
-                map(str, sorted(seg["orig_ids"]))
-            )
-        })
+            "Original Segments": ", ".join(map(str, sorted(seg["orig_ids"])))
+        }
+        for seg in clean_segments
+    ])
 
-    df_final = pd.DataFrame(df_data)
+    df_deleted = pd.DataFrame(deleted_segments)
 
     # EXPORT EXCEL
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-        df_final.to_excel(writer, sheet_name="Merged Segments", index=False)
+        df_final.to_excel(writer, sheet_name="Final Segments", index=False)
+
+        if not df_deleted.empty:
+            df_deleted.to_excel(writer, sheet_name="Deleted Segments", index=False)
 
     # STORE
     st.session_state.joined_srt = joined_srt
@@ -121,9 +179,9 @@ if st.session_state.processed:
     st.write(f"⏱️ Time: {st.session_state.duration}")
 
     st.download_button(
-        "📥 Download Merged SRT",
+        "📥 Download Cleaned SRT",
         st.session_state.joined_srt,
-        file_name="merged.srt"
+        file_name="cleaned_merged.srt"
     )
 
     st.download_button(

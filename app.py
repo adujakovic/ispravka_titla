@@ -6,9 +6,9 @@ import time as tm
 import re
 
 # =====================================
-# CONFIG
+# CONFIGURATION
 # =====================================
-
+# Defines how aggressive merging is
 MAX_LEN_STEPS = (60, 120, 140)
 
 MIN_DURATION = 1.0
@@ -17,7 +17,8 @@ MAX_DIST_BACKWARD = 1.0
 
 
 # =====================================
-# VALIDATION + FILTER
+# VALIDATION FUNCTION
+# Removes bad segments after merging
 # =====================================
 def validate_and_filter_segments(segments):
 
@@ -32,21 +33,21 @@ def validate_and_filter_segments(segments):
 
         error_reason = None
 
-        # 1. broj
+        # 1. Segment numbering check
         if seg["num"] != expected_number:
-            error_reason = f"Pogrešan redoslijed (očekivano {expected_number})"
+            error_reason = f"Pogrešan redoslijed (expected {expected_number})"
 
-        # 2. vrijeme format
+        # 2. Time format check
         if not time_pattern.match(seg["start"]) or not time_pattern.match(seg["end"]):
-            error_reason = "Neispravan format vremena"
+            error_reason = "Invalid time format"
 
-        # 3. start >= end
+        # 3. Logical time check
         if seg["start"] >= seg["end"]:
             error_reason = "Start >= End"
 
-        # 4. tekst
+        # 4. Empty text check
         if not seg["text"].strip():
-            error_reason = "Prazan tekst"
+            error_reason = "Empty text"
 
         if error_reason:
             deleted_segments.append({
@@ -60,38 +61,40 @@ def validate_and_filter_segments(segments):
 
         expected_number += 1
 
-    # renumeracija
+    # Renumber valid segments after deletion
     for i, seg in enumerate(valid_segments, start=1):
         seg["num"] = i
 
     return valid_segments, deleted_segments
 
+
+# =====================================
+# FIX TIMESTAMPS BEFORE MERGE
+# =====================================
 def fix_srt_timestamps(content):
 
     def fix_time_format(t):
-        # razdvoji ms dio
         if "," in t:
             base, ms = t.split(",")
-            ms = (ms + "000")[:3]  # uvijek 3 znamenke
+            ms = (ms + "000")[:3]  # force 3 digits
             return f"{base},{ms}"
-        else:
-            return t + ",000"
+        return t + ",000"
 
     lines = content.split("\n")
-    fixed_lines = []
-
-    time_pattern = re.compile(r"(\d{2}:\d{2}:\d{2},?\d*)\s*-->\s*(\d{2}:\d{2}:\d{2},?\d*)")
 
     segments = []
-    
     i = 0
+
+    # Parse raw SRT blocks
     while i < len(lines):
         if lines[i].strip().isdigit():
+
             num = lines[i].strip()
             time_line = lines[i+1].strip() if i+1 < len(lines) else ""
-            text_block = []
 
+            text_block = []
             j = i + 2
+
             while j < len(lines) and lines[j].strip():
                 text_block.append(lines[j])
                 j += 1
@@ -106,20 +109,16 @@ def fix_srt_timestamps(content):
         else:
             i += 1
 
-    # =====================================
-    # FIX TIME FORMAT
-    # =====================================
+    # Fix time format
+    pattern = re.compile(r"(\d{2}:\d{2}:\d{2},?\d*)\s*-->\s*(\d{2}:\d{2}:\d{2},?\d*)")
+
     for seg in segments:
-        match = time_pattern.match(seg["time"])
+        match = pattern.match(seg["time"])
         if match:
             start, end = match.groups()
-            start = fix_time_format(start)
-            end = fix_time_format(end)
-            seg["time"] = f"{start} --> {end}"
+            seg["time"] = f"{fix_time_format(start)} --> {fix_time_format(end)}"
 
-    # =====================================
-    # FIX LOGICAL ORDER
-    # =====================================
+    # Fix logical overlaps
     for idx, seg in enumerate(segments):
 
         start, end = seg["time"].split(" --> ")
@@ -127,27 +126,23 @@ def fix_srt_timestamps(content):
         start_sec = titl_join.to_seconds(start)
         end_sec = titl_join.to_seconds(end)
 
-        # ne smije biti prije prethodnog
+        # Prevent overlap with previous
         if idx > 0:
             prev_end = titl_join.to_seconds(
                 segments[idx-1]["time"].split(" --> ")[1]
             )
-            if start_sec < prev_end:
-                start_sec = prev_end
+            start_sec = max(start_sec, prev_end)
 
-        # ne smije prelaziti u idući
+        # Prevent overlap with next
         if idx < len(segments) - 1:
             next_start = titl_join.to_seconds(
                 segments[idx+1]["time"].split(" --> ")[0]
             )
-            if end_sec > next_start:
-                end_sec = next_start
+            end_sec = min(end_sec, next_start)
 
         seg["time"] = f"{titl_join.to_srt_time(start_sec)} --> {titl_join.to_srt_time(end_sec)}"
 
-    # =====================================
-    # REBUILD SRT
-    # =====================================
+    # Rebuild SRT string
     output = ""
     for i, seg in enumerate(segments, start=1):
         output += f"{i}\n{seg['time']}\n"
@@ -157,13 +152,50 @@ def fix_srt_timestamps(content):
 
 
 # =====================================
-# PASSWORD
+# SAFE FILE DECODING
+# Handles multiple encodings
 # =====================================
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+def decode_file(raw_bytes):
 
-if not st.session_state.authenticated:
-    st.title("🔐 Subtitle Merger Login")
+    encodings = [
+        "utf-8-sig",
+        "utf-16",
+        "windows-1250",
+        "windows-1252",
+        "latin-1"
+    ]
+
+    for enc in encodings:
+        try:
+            return raw_bytes.decode(enc)
+        except UnicodeDecodeError:
+            continue
+
+    return None
+
+
+# =====================================
+# EXTRACT ORIGINAL SEGMENTS (for Excel)
+# =====================================
+def extract_original_blocks(segment_ids_str, raw_content):
+
+    if not segment_ids_str:
+        return ""
+
+    ids = [int(x.strip()) for x in segment_ids_str.split(",") if x.strip().isdigit()]
+    blocks = []
+
+    for oid in ids:
+        pattern = rf"{oid}\s+([\d:,]+ --> [\d:,]+)\s+([\s\S]*?)(?=\n\d+\n|$)"
+        match = re.search(pattern, raw_content)
+
+        if match:
+            time_line = match.group(1)
+            text_block = match.group(2).strip()
+            blocks.append(f"{oid}\n{time_line}\n{text_block}")
+
+    return "\n\n".join(blocks)
+
 
 # =====================================
 # UI
@@ -175,53 +207,32 @@ uploaded_file = st.file_uploader("Upload SRT file", type=["srt"])
 if "processed" not in st.session_state:
     st.session_state.processed = False
 
+
 # =====================================
-# PROCESS
+# PROCESS PIPELINE
 # =====================================
 if uploaded_file and st.button("🚀 Process SRT"):
 
     start_time = tm.time()
 
     raw_bytes = uploaded_file.getvalue()
-    
-    encodings = [
-        "utf-8-sig",
-        "utf-16",
-        "windows-1250",
-        "windows-1252",
-        "latin-1"
-    ]
-    
-    content = None
-    
-    for enc in encodings:
-        try:
-            content = raw_bytes.decode(enc)
-            break
-        except UnicodeDecodeError:
-            continue
-    
+    content = decode_file(raw_bytes)
+
     if content is None:
-        st.error("❌ Ne mogu pročitati encoding fajla")
-        st.stop()  
-    
+        st.error("❌ Cannot decode file")
+        st.stop()
 
-
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    # Normalize line endings
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 🔥 FIX TIMESTAMPS PRIJE MERGE
+    # Step 1: Fix timestamps
     content = fix_srt_timestamps(content)
 
-    # INITIAL PARSE
+    # Step 2: Parse + Merge (clean loop)
     merged_segments, mapping = titl_join.parse_srt(content)
 
-    # ITERATIVE MERGING
     for MAX_LEN in MAX_LEN_STEPS:
-        merged_segments, mapping = titl_join.parse_srt(
-            merged_segments,
-            max_len=MAX_LEN
-        )
+        merged_segments, mapping = titl_join.parse_srt(merged_segments, max_len=MAX_LEN)
     for MAX_LEN in MAX_LEN_STEPS:
         merged_segments, mapping = titl_join.merge_segments(
             merged_segments,
@@ -231,80 +242,54 @@ if uploaded_file and st.button("🚀 Process SRT"):
             max_dist_backward=MAX_DIST_BACKWARD
         )
 
-    # =====================================
-    # VALIDATION + FILTER
-    # =====================================
+    # Step 3: Validation
     clean_segments, deleted_segments = validate_and_filter_segments(merged_segments)
 
-    # FINAL SRT
+    # Step 4: Build final SRT
     joined_srt = titl_join.segments_to_srt(clean_segments)
 
-    
-
     # =====================================
-    # EXCEL DATA
+    # EXCEL OUTPUT
     # =====================================
-
-    
     df_final = pd.DataFrame([
         {
             "Segment": seg["num"],
             "Time": f"{seg['start']} --> {seg['end']}",
             "Merged Text": seg["text"],
-            "Original Segments": ", ".join(map(str, sorted(seg["orig_ids"])))
+            "Original Segments": ", ".join(map(str, sorted(seg["orig_ids"]))),
+            "Original Full Segments": extract_original_blocks(
+                ", ".join(map(str, sorted(seg["orig_ids"]))),
+                content
+            )
         }
         for seg in clean_segments
     ])
 
-    def extract_original_blocks(segment_list_str, raw_content):
-        if not segment_list_str:
-            return ""
-
-        ids = [int(x.strip()) for x in segment_list_str.split(",") if x.strip().isdigit()]
-        blocks = []
-
-        for oid in ids:
-            pattern = rf"{oid}\s+([\d:,]+ --> [\d:,]+)\s+([\s\S]*?)(?=\n\d+\n|$)"
-            match = re.search(pattern, raw_content)
-
-            if match:
-                time_line = match.group(1)
-                text_block = match.group(2).strip()
-                blocks.append(f"{oid}\n{time_line}\n{text_block}")
-
-        return "\n\n".join(blocks)
-
-    df_final["Original Full Segments"] = df_final["Original Segments"].apply(
-        lambda x: extract_original_blocks(x, content)
-    )
-
     df_deleted = pd.DataFrame(deleted_segments)
 
-    # EXPORT EXCEL
+    if df_deleted.empty:
+        df_deleted = pd.DataFrame([{
+            "Segment": "",
+            "Time": "",
+            "Text": "",
+            "Error": "Nema grešaka"
+        }])
+
+    # Export Excel
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
         df_final.to_excel(writer, sheet_name="Final Segments", index=False)
-        if df_deleted.empty:
-            df_deleted = pd.DataFrame([{
-                "Segment": "",
-                "Time": "",
-                "Text": "",
-                "Error": "Nema grešaka"
-            }])
-        
         df_deleted.to_excel(writer, sheet_name="Deleted Segments", index=False)
-    # STORE
+
+    # Store results
     st.session_state.joined_srt = joined_srt
     st.session_state.excel_bytes = excel_buffer.getvalue()
     st.session_state.processed = True
 
-    end_time = tm.time()
-    total_seconds = end_time - start_time
+    # Timing
+    total_seconds = tm.time() - start_time
+    st.session_state.duration = tm.strftime("%H:%M:%S", tm.gmtime(total_seconds))
 
-    st.session_state.duration = tm.strftime(
-        "%H:%M:%S",
-        tm.gmtime(total_seconds)
-    )
 
 # =====================================
 # OUTPUT

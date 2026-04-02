@@ -128,7 +128,7 @@ if uploaded_file and st.button("🚀 Process SRT"):
             merged_segments,
             max_len=MAX_LEN
         )
-
+    for MAX_LEN in MAX_LEN_STEPS:
         merged_segments, mapping = titl_join.merge_segments(
             merged_segments,
             max_len=MAX_LEN,

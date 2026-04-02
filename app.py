@@ -8,6 +8,7 @@ import re
 # =====================================
 # CONFIG
 # =====================================
+
 MAX_LEN_STEPS = (60, 120, 140)
 
 MIN_DURATION = 1.0
@@ -65,6 +66,95 @@ def validate_and_filter_segments(segments):
 
     return valid_segments, deleted_segments
 
+def fix_srt_timestamps(content):
+
+    def fix_time_format(t):
+        # razdvoji ms dio
+        if "," in t:
+            base, ms = t.split(",")
+            ms = (ms + "000")[:3]  # uvijek 3 znamenke
+            return f"{base},{ms}"
+        else:
+            return t + ",000"
+
+    lines = content.split("\n")
+    fixed_lines = []
+
+    time_pattern = re.compile(r"(\d{2}:\d{2}:\d{2},?\d*)\s*-->\s*(\d{2}:\d{2}:\d{2},?\d*)")
+
+    segments = []
+    
+    i = 0
+    while i < len(lines):
+        if lines[i].strip().isdigit():
+            num = lines[i].strip()
+            time_line = lines[i+1].strip() if i+1 < len(lines) else ""
+            text_block = []
+
+            j = i + 2
+            while j < len(lines) and lines[j].strip():
+                text_block.append(lines[j])
+                j += 1
+
+            segments.append({
+                "num": num,
+                "time": time_line,
+                "text": text_block
+            })
+
+            i = j
+        else:
+            i += 1
+
+    # =====================================
+    # FIX TIME FORMAT
+    # =====================================
+    for seg in segments:
+        match = time_pattern.match(seg["time"])
+        if match:
+            start, end = match.groups()
+            start = fix_time_format(start)
+            end = fix_time_format(end)
+            seg["time"] = f"{start} --> {end}"
+
+    # =====================================
+    # FIX LOGICAL ORDER
+    # =====================================
+    for idx, seg in enumerate(segments):
+
+        start, end = seg["time"].split(" --> ")
+
+        start_sec = titl_join.to_seconds(start)
+        end_sec = titl_join.to_seconds(end)
+
+        # ne smije biti prije prethodnog
+        if idx > 0:
+            prev_end = titl_join.to_seconds(
+                segments[idx-1]["time"].split(" --> ")[1]
+            )
+            if start_sec < prev_end:
+                start_sec = prev_end
+
+        # ne smije prelaziti u idući
+        if idx < len(segments) - 1:
+            next_start = titl_join.to_seconds(
+                segments[idx+1]["time"].split(" --> ")[0]
+            )
+            if end_sec > next_start:
+                end_sec = next_start
+
+        seg["time"] = f"{titl_join.to_srt_time(start_sec)} --> {titl_join.to_srt_time(end_sec)}"
+
+    # =====================================
+    # REBUILD SRT
+    # =====================================
+    output = ""
+    for i, seg in enumerate(segments, start=1):
+        output += f"{i}\n{seg['time']}\n"
+        output += "\n".join(seg["text"]) + "\n\n"
+
+    return output
+
 
 # =====================================
 # PASSWORD
@@ -118,6 +208,10 @@ if uploaded_file and st.button("🚀 Process SRT"):
 
 
     content = content.replace("\r\n", "\n").replace("\r", "\n")
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
+    # 🔥 FIX TIMESTAMPS PRIJE MERGE
+    content = fix_srt_timestamps(content)
 
     # INITIAL PARSE
     merged_segments, mapping = titl_join.parse_srt(content)
